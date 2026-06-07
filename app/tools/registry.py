@@ -6,6 +6,7 @@ from app.tools.service_info import ServiceInfoTool
 from app.tools.history_issue import HistoryIssueTool, SimilarIssueTool
 from app.tools.log_query import LogQueryTool, LogDetailTool
 from app.tools.issue_update import IssueUpdateTool
+from app.tools.knowledge_base import KnowledgeBaseTool
 from app.rag.rag_tools import RAGSearchTool, RAGGenerateTool, RAGStatsTool
 
 
@@ -25,6 +26,8 @@ class ToolRegistry:
             # RAG 知识库检索（增强版）
             RAGSearchTool(),
             RAGGenerateTool(),
+            # 传统知识库搜索（降级方案）
+            KnowledgeBaseTool(),
             # 服务信息
             ServiceInfoTool(),
             # 历史问题

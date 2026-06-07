@@ -2,8 +2,9 @@
 Go Backend API Client for Tools
 """
 import httpx
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict
 from app.config import settings
+from app.core.context import get_current_token
 
 
 class BackendAPIClient:
@@ -12,13 +13,14 @@ class BackendAPIClient:
     def __init__(self, base_url: str = "http://127.0.0.1:8080"):
         self.base_url = base_url
         self.timeout = httpx.Timeout(30.0)
-        # 系统管理员 token（用于 Agent 调用）
-        self.admin_token: Optional[str] = None
 
     def _get_headers(self) -> dict:
+        """获取请求头，自动从上下文获取当前用户的 JWT"""
         headers = {"Content-Type": "application/json"}
-        if self.admin_token:
-            headers["Authorization"] = f"Bearer {self.admin_token}"
+        # 从上下文获取当前请求的 JWT token
+        token = get_current_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         return headers
 
     async def _request(self, method: str, path: str, **kwargs) -> dict:

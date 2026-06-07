@@ -5,6 +5,8 @@ RAG API Routes - 文档向量化接口
 import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import Optional
 
 from app.rag.document_parser import document_parser
 from app.rag.embedding_service import get_embedding_service
@@ -13,6 +15,28 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rag", tags=["rag"])
 
+
+# ========== Pydantic Models ==========
+
+class VectorizeTextRequest(BaseModel):
+    """向量化文本请求"""
+    doc_id: int
+    title: str = ""
+    doc_type: str = ""
+    project_name: str = ""
+    service_name: str = ""
+    content: str
+    heading_path: str = ""
+
+
+class VectorizeTextResponse(BaseModel):
+    """向量化文本响应"""
+    doc_id: int
+    stored_chunks: int
+    deleted_chunks: int
+
+
+# ========== API Routes ==========
 
 @router.post("/vectorize")
 async def vectorize_document(
@@ -102,28 +126,14 @@ async def vectorize_document(
 
 
 @router.post("/vectorize/text")
-async def vectorize_text(
-    doc_id: int = Form(...),
-    title: str = Form(""),
-    doc_type: str = Form(""),
-    project_name: str = Form(""),
-    service_name: str = Form(""),
-    content: str = Form(...),
-    heading_path: str = Form("")
-):
+async def vectorize_text(request: VectorizeTextRequest):
     """
     向量化纯文本
 
-    直接提交文本内容进行向量化
+    直接提交文本内容进行向量化，使用 JSON Body 格式
 
     Args:
-        doc_id: 文档ID
-        title: 文档标题
-        doc_type: 文档类型
-        project_name: 项目名称
-        service_name: 服务名称
-        content: 文本内容
-        heading_path: 章节路径
+        request: 向量化请求参数
 
     Returns:
         存储结果
@@ -133,13 +143,13 @@ async def vectorize_text(
 
         # 构建单个块
         chunk = DocumentChunk(
-            content=content,
-            doc_id=doc_id,
-            title=title,
-            doc_type=doc_type,
-            project_name=project_name,
-            service_name=service_name,
-            heading_path=heading_path,
+            content=request.content,
+            doc_id=request.doc_id,
+            title=request.title,
+            doc_type=request.doc_type,
+            project_name=request.project_name,
+            service_name=request.service_name,
+            heading_path=request.heading_path,
             chunk_index=0
         )
 
@@ -147,17 +157,19 @@ async def vectorize_text(
         embedding_service = get_embedding_service()
 
         # 删除旧文档
-        deleted_count = embedding_service.delete_by_doc_id(doc_id)
+        deleted_count = embedding_service.delete_by_doc_id(request.doc_id)
 
         # 向量化并存储
         chunks_with_emb = embedding_service.vectorize_chunks([chunk])
         stored_count = embedding_service.store_chunks(chunks_with_emb)
 
+        logger.info(f"Vectorized text doc {request.doc_id}: stored {stored_count} chunks")
+
         return JSONResponse({
             "code": 0,
             "message": "success",
             "data": {
-                "doc_id": doc_id,
+                "doc_id": request.doc_id,
                 "stored_chunks": stored_count,
                 "deleted_chunks": deleted_count
             }

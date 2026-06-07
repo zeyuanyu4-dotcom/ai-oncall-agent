@@ -24,7 +24,7 @@ class Settings:
     QIANFAN_MODEL: str = os.getenv("QIANFAN_MODEL", "ernie-4.0-8k")
 
     # OpenAI 配置 (可选，也支持 OpenRouter)
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "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")
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4")
 
@@ -35,6 +35,14 @@ class Settings:
     # Timeouts
     LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "60"))
     HTTP_TIMEOUT: int = int(os.getenv("HTTP_TIMEOUT", "30"))
+
+    # RabbitMQ Configuration
+    RABBITMQ_URL: str = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672/")
+    RABBITMQ_EXCHANGE: str = os.getenv("RABBITMQ_EXCHANGE", "analysis.exchange")
+    RABBITMQ_COMMAND_QUEUE: str = os.getenv("RABBITMQ_COMMAND_QUEUE", "analysis.command.queue")
+    RABBITMQ_RESULT_QUEUE: str = os.getenv("RABBITMQ_RESULT_QUEUE", "analysis.result.queue")
+    RABBITMQ_PROGRESS_QUEUE: str = os.getenv("RABBITMQ_PROGRESS_QUEUE", "analysis.progress.queue")
+    RABBITMQ_ENABLED: bool = os.getenv("RABBITMQ_ENABLED", "false").lower() == "true"
 
 
 settings = Settings()
