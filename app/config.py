@@ -44,5 +44,22 @@ class Settings:
     RABBITMQ_PROGRESS_QUEUE: str = os.getenv("RABBITMQ_PROGRESS_QUEUE", "analysis.progress.queue")
     RABBITMQ_ENABLED: bool = os.getenv("RABBITMQ_ENABLED", "false").lower() == "true"
 
+    # gRPC server (被 Go Worker 调用的入站 gRPC 端口)
+    GRPC_ENABLED: bool = os.getenv("GRPC_ENABLED", "true").lower() == "true"
+    GRPC_HOST: str = os.getenv("GRPC_HOST", "0.0.0.0")
+    GRPC_PORT: int = int(os.getenv("GRPC_PORT", "50051"))
+    GRPC_MAX_WORKERS: int = int(os.getenv("GRPC_MAX_WORKERS", "10"))
+
+    # gRPC client: Agent -> Go 后端的 ToolingService
+    TOOLING_GRPC_ADDR: str = os.getenv("TOOLING_GRPC_ADDR", "127.0.0.1:50061")
+    TOOLING_GRPC_TIMEOUT: int = int(os.getenv("TOOLING_GRPC_TIMEOUT", "30"))
+
+    # gRPC client: agent-orchestrator -> rag-engine
+    # (agent-orchestrator 启动时会调这里；rag-engine 自己启动时不需要)
+    RAG_GRPC_ADDR: str = os.getenv("RAG_GRPC_ADDR", "127.0.0.1:50052")
+    RAG_GRPC_TIMEOUT: int = int(os.getenv("RAG_GRPC_TIMEOUT", "60"))
+    # rag-engine 自身监听的端口（用于 K8s 部署时区分）
+    RAG_GRPC_PORT: int = int(os.getenv("RAG_GRPC_PORT", "50052"))
+
 
 settings = Settings()

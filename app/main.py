@@ -1,5 +1,11 @@
 """
 AI Oncall Agent - Main Application
+
+启动：
+1. FastAPI HTTP server（兼容旧调用）
+2. gRPC server（AgentService + CapabilityService，给 Go 后端使用）
+
+两个 server 跑在同一个 Python 进程内。
 """
 import logging
 from contextlib import asynccontextmanager
@@ -17,6 +23,7 @@ from app.api.routes import generate
 from app.core.context import set_current_token, clear_current_token
 from app.mq import RabbitMQClient, MQConfig
 from app.middleware import setup_rate_limiting
+from app.grpc_server.server import start_grpc_in_background, stop_grpc
 
 # 配置日志
 logging.basicConfig(
@@ -30,6 +37,9 @@ logger = logging.getLogger(__name__)
 class JWTContextMiddleware(BaseHTTPMiddleware):
     """JWT 上下文中间件 - 提取请求中的 JWT 并存入上下文"""
 
+    # 不打印 token 的 endpoint（健康检查等会产生大量噪音）
+    _SKIP_LOG_PATHS = {"/", "/health"}
+
     async def dispatch(self, request: Request, call_next):
         # 提取 Authorization header 中的 JWT
         auth_header = request.headers.get("Authorization", "")
@@ -40,6 +50,19 @@ class JWTContextMiddleware(BaseHTTPMiddleware):
         # 存入上下文
         set_current_token(token)
 
+        # 调试日志：脱敏后记录 token 状态
+        if request.url.path not in self._SKIP_LOG_PATHS:
+            if token:
+                logger.info(
+                    "AI request received with user token",
+                    extra={"path": request.url.path, "token_prefix": token[:10] + "..."},
+                )
+            else:
+                logger.warning(
+                    "AI request received WITHOUT user token (内部工具调用将 401)",
+                    extra={"path": request.url.path, "client": request.client.host if request.client else "unknown"},
+                )
+
         try:
             response = await call_next(request)
         finally:
@@ -49,15 +72,23 @@ class JWTContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
+# 在模块级持有 gRPC server 实例，lifespan 里 start/stop
+_grpc_server = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期"""
+    global _grpc_server
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     logger.info(f"LLM Provider: {settings.LLM_PROVIDER}")
 
-    # 初始化限流中间件
-    setup_rate_limiting(app)
-    logger.info("Rate limiting initialized")
+    # 启动 gRPC server（与 HTTP 并行）
+    _grpc_server = await start_grpc_in_background()
+    if _grpc_server is not None:
+        logger.info("gRPC server started")
+    else:
+        logger.info("gRPC server not started (disabled by config)")
 
     # 初始化 RabbitMQ（如果启用）
     if settings.RABBITMQ_ENABLED:
@@ -79,6 +110,10 @@ async def lifespan(app: FastAPI):
     # 关闭 MQ 连接
     if analysis.mq_client:
         analysis.mq_client.close()
+
+    # 关闭 gRPC server
+    await stop_grpc(_grpc_server)
+    _grpc_server = None
 
     logger.info("Shutting down...")
 
@@ -102,6 +137,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 初始化限流（必须在模块级，因为 add_middleware 不能在 lifespan 里调用）
+setup_rate_limiting(app)
+logger.info("Rate limiting initialized")
 
 # 注册路由
 app.include_router(analysis.router)

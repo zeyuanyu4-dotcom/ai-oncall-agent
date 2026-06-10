@@ -29,5 +29,10 @@ sentence-transformers>=2.2.0
 python-docx>=1.0.0
 PyPDF2>=3.0.0
 
+# 注意：grpcio / grpcio-reflection / protobuf 在 Dockerfile 中分阶段安装
+# 原因：grpcio-reflection 1.81.0 还未声明对 protobuf 7.x 的支持，
+# 但项目 gencode 是 protobuf 7.35.0 生成。Dockerfile 中用 --no-deps 绕开 resolver 冲突。
+# （本地 .venv 已验证此组合可用）
+
 # 工具
 pyyaml>=6.0

@@ -62,23 +62,15 @@ class SimilarIssueTool(BaseTool):
 
     async def execute(self, issue_id: int, limit: int = 5, **kwargs) -> ToolResult:
         try:
-            from app.services.api_client import backend_client
-            result = await backend_client._request(
-                "GET", f"/api/issues/{issue_id}/similar",
-                params={"limit": limit}
+            # ToolingService proto 当前未提供 similar-issues 端点；
+            # 走 gRPC 路径时返回空结果并记录日志，避免在 agent 分析时炸。
+            logger.info(
+                "SimilarIssueTool not supported in gRPC mode | issue_id=%s | limit=%s",
+                issue_id, limit,
             )
-
-            data = result.get("data", {})
-            issues = data.get("list", [])
-
-            if not issues:
-                return ToolResult(data=[], summary="未找到相似问题")
-
-            summaries = [f"[{i.get('issue_no', '-')}] {i.get('title', '-')}" for i in issues[:5]]
             return ToolResult(
-                data=issues,
-                summary=f"找到 {len(issues)} 条相似问题: " + "; ".join(summaries)
+                data=[],
+                summary="相似问题检索在 gRPC 模式下暂未实现（请通过 HTTP 端的 GET /api/issues/<id>/similar 调用）",
             )
-
         except Exception as e:
             return ToolResult(success=False, error=str(e), summary=f"查询相似问题失败: {str(e)}")

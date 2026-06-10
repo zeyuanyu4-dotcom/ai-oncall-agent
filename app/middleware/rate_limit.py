@@ -3,6 +3,7 @@ Rate Limiting Middleware
 基于 SlowAPI 实现限流
 """
 import logging
+import os
 from fastapi import Request, HTTPException
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -23,10 +24,12 @@ def get_user_id(request: Request) -> str:
 
 
 # 创建限流器
+# 存储后端：开发环境默认用内存（避免无 Redis 时连不上），
+# 生产可设置 RATE_LIMIT_STORAGE_URI=redis://host:port/db
 limiter = Limiter(
     key_func=get_user_id,
     default_limits=["200/hour"],  # 默认限制
-    storage_uri="redis://127.0.0.1:6379/0",  # Redis 存储
+    storage_uri=os.getenv("RATE_LIMIT_STORAGE_URI", "memory://"),
     storage_options={"socket_connect_timeout": 3},
     strategy="fixed-window",  # 固定窗口策略
     enabled=True,

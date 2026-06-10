@@ -73,18 +73,16 @@ class LogDetailTool(BaseTool):
 
     async def execute(self, log_id: int, **kwargs) -> ToolResult:
         try:
-            from app.services.api_client import backend_client
-            result = await backend_client._request("GET", f"/api/logs/{log_id}")
-            data = result.get("data", {})
-
-            if not data:
-                return ToolResult(success=False, error="日志未找到", summary="日志未找到")
-
-            summary = f"日志详情 [{data.get('log_level', '-')}]: {data.get('log_content', '')[:200]}"
-            if data.get("stack_trace"):
-                summary += f"\n堆栈: {data['stack_trace'][:300]}..."
-
-            return ToolResult(data=data, summary=summary)
-
+            # ToolingService proto 当前未提供单条日志详情；
+            # 走 gRPC 路径时直接走搜索接口查 trace 或 service。
+            logger.info(
+                "LogDetailTool not supported in gRPC mode | log_id=%s",
+                log_id,
+            )
+            return ToolResult(
+                success=False,
+                error="gRPC 模式下暂不支持单条日志详情",
+                summary="单条日志详情请通过 HTTP 端 /api/logs/<id> 获取",
+            )
         except Exception as e:
             return ToolResult(success=False, error=str(e), summary=f"获取日志详情失败: {str(e)}")

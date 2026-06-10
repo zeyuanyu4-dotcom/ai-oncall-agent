@@ -1,18 +1,22 @@
-"""
-RAG Tool - 基于向量检索的增强生成
+"""RAG Tools - 工具层.
+
+注意：这些工具注册在 agent-orchestrator 进程里，被 IssueAgent 调用。
+但实际向量化 / 检索都通过 gRPC 走独立的 rag-engine。
+
+RAGGenerateTool 仍在这里完成 LLM 生成（agent-orchestrator 负责 LLM）。
 """
 import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Optional
 
 from app.tools.base import BaseTool, ToolResult
-from app.rag.embedding_service import get_embedding_service
+from app.rag.rag_client import rag_client
 
 logger = logging.getLogger(__name__)
 
 
 class RAGSearchTool(BaseTool):
-    """RAG 检索工具 - 使用向量检索增强生成"""
+    """RAG 检索工具 - 通过 gRPC 调 rag-engine 做向量检索."""
 
     name = "rag_search"
     description = """
@@ -33,15 +37,11 @@ class RAGSearchTool(BaseTool):
                      service_name: str = None,
                      **kwargs) -> ToolResult:
         try:
-            # 获取向量化服务
-            embedding_service = get_embedding_service()
-
-            # 执行检索
-            results = embedding_service.search(
+            results = await rag_client.search(
                 query=query,
                 top_k=top_k,
-                project_name=project_name,
-                service_name=service_name
+                project_name=project_name or "",
+                service_name=service_name or "",
             )
 
             if not results:
@@ -53,14 +53,17 @@ class RAGSearchTool(BaseTool):
             # 生成摘要
             summaries = []
             for i, result in enumerate(results[:5]):
-                metadata = result.get('metadata', {})
+                metadata = result.get('metadata') or {}
                 similarity = result.get('similarity', 0)
                 similarity_percent = f"{similarity * 100:.0f}%"
 
+                title = metadata.get('title', '-')
+                heading = metadata.get('heading_path', '-')
+                content = result.get('content', '')[:200]
                 summaries.append(
-                    f"[{i+1}] {metadata.get('title', '-')} / {metadata.get('heading_path', '-')} "
+                    f"[{i+1}] {title} / {heading} "
                     f"(相似度: {similarity_percent})\n"
-                    f"内容: {result['content'][:200]}..."
+                    f"内容: {content}..."
                 )
 
             summary = f"找到 {len(results)} 条相关内容，展示前5条:\n" + "\n".join(summaries)
@@ -80,7 +83,7 @@ class RAGSearchTool(BaseTool):
 
 
 class RAGGenerateTool(BaseTool):
-    """RAG 生成工具 - 基于检索结果生成回答"""
+    """RAG 生成工具 - 检索 + LLM 生成（LLM 由 agent-orchestrator 提供）."""
 
     name = "rag_generate"
     description = """
@@ -98,9 +101,8 @@ class RAGGenerateTool(BaseTool):
         try:
             from app.services.llm_service import llm_service
 
-            # 先检索相关文档
-            embedding_service = get_embedding_service()
-            results = embedding_service.search(query=query, top_k=5)
+            # 检索通过 gRPC 走 rag-engine
+            results = await rag_client.search(query=query, top_k=5)
 
             if not results:
                 return ToolResult(
@@ -112,16 +114,15 @@ class RAGGenerateTool(BaseTool):
             # 构建上下文
             context_parts = []
             for i, result in enumerate(results):
-                metadata = result.get('metadata', {})
+                metadata = result.get('metadata') or {}
                 context_parts.append(
                     f"[来源{i+1}] {metadata.get('title', '-')}\n"
                     f"章节: {metadata.get('heading_path', '-')}\n"
-                    f"内容: {result['content']}"
+                    f"内容: {result.get('content', '')}"
                 )
 
             knowledge_context = "\n\n".join(context_parts)
 
-            # 构建 Prompt
             prompt = f"""## 知识库内容:
 {knowledge_context}
 
@@ -142,13 +143,12 @@ class RAGGenerateTool(BaseTool):
 如果知识库中没有相关信息，请明确说明'知识库中未找到相关内容'。
 在回答中引用来源，格式: [来源X]"""
 
-            # 调用 LLM 生成
+            # LLM 由 agent-orchestrator 自己调（不在 rag-engine 进程里）
             response = await llm_service.chat(system_prompt, prompt)
 
-            # 格式化结果
             result_text = f"基于知识库生成的回答:\n\n{response}\n\n---\n相关文档来源:"
             for i, r in enumerate(results[:3]):
-                metadata = r.get('metadata', {})
+                metadata = r.get('metadata') or {}
                 result_text += f"\n[{i+1}] {metadata.get('title', '-')} - {metadata.get('heading_path', '-')}"
 
             return ToolResult(
@@ -156,9 +156,9 @@ class RAGGenerateTool(BaseTool):
                     "answer": response,
                     "sources": [
                         {
-                            "title": r['metadata'].get('title', '-'),
-                            "heading": r['metadata'].get('heading_path', '-'),
-                            "content": r['content'][:300]
+                            "title": (r.get('metadata') or {}).get('title', '-'),
+                            "heading": (r.get('metadata') or {}).get('heading_path', '-'),
+                            "content": (r.get('content') or '')[:300]
                         }
                         for r in results[:3]
                     ]
@@ -176,7 +176,7 @@ class RAGGenerateTool(BaseTool):
 
 
 class RAGStatsTool(BaseTool):
-    """RAG 统计工具 - 查看知识库状态"""
+    """RAG 统计工具 - 走 gRPC 调 rag-engine."""
 
     name = "rag_stats"
     description = """
@@ -188,13 +188,12 @@ class RAGStatsTool(BaseTool):
 
     async def execute(self, **kwargs) -> ToolResult:
         try:
-            embedding_service = get_embedding_service()
-            stats = embedding_service.get_stats()
+            stats = await rag_client.get_stats()
 
             summary = f"知识库统计:\n" \
-                     f"- 总文档块数: {stats['total_chunks']}\n" \
-                     f"- 向量模型: {stats['embedding_model']}\n" \
-                     f"- 存储集合: {stats['collection_name']}"
+                     f"- 总文档块数: {stats.get('total_chunks', 0)}\n" \
+                     f"- 向量模型: {stats.get('embedding_model', '-')}\n" \
+                     f"- 存储集合: {stats.get('collection_name', '-')}"
 
             return ToolResult(data=stats, summary=summary)
 

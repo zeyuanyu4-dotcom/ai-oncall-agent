@@ -1,0 +1,23 @@
+# AI Oncall Agent - rag-engine 专用依赖
+# 在 requirements-base.txt 基础上添加本地 embedding（ONNX Runtime 版本）
+#
+# 不再使用 sentence-transformers：
+#   原因：sentence-transformers 依赖 torch（426MB）+ nvidia-cudnn（444MB）+ cublas（542MB）等
+#   总计 ~3GB，导致镜像 9GB、冷启动 5-30s。
+#
+# 改用 ONNX Runtime：
+#   - onnxruntime CPU build：~50MB
+#   - 模型文件：~90MB（一次性下载，作为 Docker layer 缓存）
+#   - 镜像总尺寸：~200MB（vs 9GB），冷启动 <1s
+
+-r requirements-base.txt
+
+# ONNX Runtime（CPU 推理；不需要 CUDA / GPU 工具链）
+onnxruntime>=1.18.0,<2.0.0
+
+# HuggingFace tokenizers（Fast Rust 实现，CPU 上比 Python tokenizer 快 10×）
+tokenizers>=0.15.0,<1.0.0
+
+# Chroma 向量库（持久化 + 检索）
+chromadb>=0.4.0
+# 注意：chromadb 0.5+ 自带 onnxruntime；这里 pin 一下避免它装到旧版本

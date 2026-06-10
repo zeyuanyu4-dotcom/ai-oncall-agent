@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Callable, Awaitable
 
 from app.services.llm_service import llm_service
 from app.services.api_client import backend_client
@@ -29,6 +29,10 @@ PREDEFINED_STEPS = [
 ]
 
 
+# 进度回调签名: async (step: int, progress_label: str, message: str) -> None
+ProgressCallback = Callable[[int, str, str], Awaitable[None]]
+
+
 class IssueAgent:
     """问题分析 Agent"""
 
@@ -38,7 +42,22 @@ class IssueAgent:
         self.tool_schemas = tool_registry.get_tool_schemas()
         self.api_client = backend_client
 
-    async def analyze(self, issue_data: dict, task_id: int = None) -> dict:
+    async def analyze(
+        self,
+        issue_data: dict,
+        task_id: int = None,
+        progress_callback: Optional[ProgressCallback] = None,
+        skip_http_progress: bool = False,
+    ) -> dict:
+        """分析问题.
+
+        Args:
+            issue_data: 问题数据
+            task_id: 任务 ID
+            progress_callback: 可选进度回调；签名 (step, label, message)
+            skip_http_progress: 跳过 HTTP 进度写（gRPC 模式下设为 True，
+                因为 gRPC 流本身就在传输进度）
+        """
         start_time = time.time()
         tool_call_records = []
         evidence = []
@@ -54,15 +73,28 @@ class IssueAgent:
         current_step = 1
         total_steps = len(PREDEFINED_STEPS)
 
+        async def emit(step: int, label: str, msg: str):
+            """统一进度推送：HTTP 写 + gRPC 回调双写."""
+            if progress_callback is not None:
+                try:
+                    await progress_callback(step, label, msg)
+                except Exception as e:
+                    logger.warning(f"progress_callback failed: {e}")
+            if not skip_http_progress and task_id:
+                try:
+                    await self.api_client.update_task_progress(task_id, label, msg)
+                except Exception as e:
+                    logger.warning(f"Failed to update HTTP progress: {e}")
+
         try:
             # Step 1: 提取关键信息
-            await self._update_progress(task_id, f"{current_step}/{total_steps}", "正在提取关键信息...")
+            await emit(current_step, f"{current_step}/{total_steps}", "正在提取关键信息...")
             extracted_info = await self._extract_key_info(issue_data)
             tool_call_records.append(self._create_tool_record(1, "extract_info", str(extracted_info), "成功"))
 
             # Step 2: 查询日志
             current_step = 2
-            await self._update_progress(task_id, f"{current_step}/{total_steps}", "正在查询日志...")
+            await emit(current_step, f"{current_step}/{total_steps}", "正在查询日志...")
             if extracted_info.get("trace_id"):
                 log_result = await self._query_logs(extracted_info["trace_id"])
                 if log_result.success:
@@ -71,7 +103,7 @@ class IssueAgent:
 
             # Step 3: 查询服务信息
             current_step = 3
-            await self._update_progress(task_id, f"{current_step}/{total_steps}", "正在查询服务信息...")
+            await emit(current_step, f"{current_step}/{total_steps}", "正在查询服务信息...")
             service_name = extracted_info.get("related_services", [issue_data.get("service_name")])[0] if extracted_info.get("related_services") or issue_data.get("service_name") else None
             if service_name:
                 service_result = await self._query_service_info(service_name, issue_data.get("project_id"))
@@ -81,7 +113,7 @@ class IssueAgent:
 
             # Step 4: LLM 自主决策
             current_step = 4
-            await self._update_progress(task_id, f"{current_step}/{total_steps}", "LLM 正在分析是否需要更多数据...")
+            await emit(current_step, f"{current_step}/{total_steps}", "LLM 正在分析是否需要更多数据...")
             llm_decision = await self._llm_decide_more_data(issue_data, extracted_info, evidence)
             tool_call_records.append(self._create_tool_record(4, "llm_decision", "", llm_decision.get("reason", "")))
 
@@ -92,13 +124,13 @@ class IssueAgent:
 
             # Step 7: 生成分析报告
             current_step = 7
-            await self._update_progress(task_id, f"{current_step}/{total_steps}", "正在生成分析报告...")
+            await emit(current_step, f"{current_step}/{total_steps}", "正在生成分析报告...")
             report = await self._generate_report(issue_data, extracted_info, evidence)
             tool_call_records.append(self._create_tool_record(7, "generate_report", "", "报告已生成"))
 
             # Step 8: 保存结果
             current_step = 8
-            await self._update_progress(task_id, f"{current_step}/{total_steps}", "正在保存结果...")
+            await emit(current_step, f"{current_step}/{total_steps}", "正在保存结果...")
 
             duration = int((time.time() - start_time) * 1000)
             report["tool_calls"] = tool_call_records
@@ -111,6 +143,7 @@ class IssueAgent:
             return {"summary": f"分析失败: {str(e)}", "issue_type": "unknown", "error": str(e), "tool_calls": tool_call_records}
 
     async def _update_progress(self, task_id: Optional[int], progress: str, current_step: str):
+        # 旧方法保留兼容，内部委托到 emit 流程
         if task_id:
             try:
                 await self.api_client.update_task_progress(task_id, progress, current_step)
